@@ -76,3 +76,51 @@ func Accept4(fd int, flags int) (nfd int, sa Sockaddr, err error) {
 	}
 	return
 }
+
+//go:cgo_import_dynamic libc_putmsg putmsg "libc.so"
+//go:cgo_import_dynamic libc_getmsg getmsg "libc.so"
+//go:linkname f_putmsg libc_putmsg
+//go:linkname f_getmsg libc_getmsg
+
+var (
+	f_putmsg uintptr
+	f_getmsg uintptr
+)
+
+func Ioctl(fd int, req uint, arg uintptr) (r int, err error) {
+	r0, _, e0 := sysvicall6(uintptr(unsafe.Pointer(&procioctl)), 3,
+		uintptr(fd), uintptr(req), arg, 0, 0, 0)
+
+	r = int(r0)
+	if e0 != 0 {
+		err = e0
+	}
+
+	return
+}
+
+func Putmsg(fd int, ctlptr uintptr, dataptr uintptr, flags int) (
+	r int, err error) {
+	r0, _, e0 := sysvicall6(uintptr(unsafe.Pointer(&f_putmsg)), 4,
+		uintptr(fd), ctlptr, dataptr, uintptr(flags), 0, 0)
+
+	r = int(r0)
+	if e0 != 0 {
+		err = e0
+	}
+
+	return
+}
+
+func Getmsg(fd int, ctlptr uintptr, dataptr uintptr, flagsp uintptr) (
+	r int, err error) {
+	r0, _, e0 := sysvicall6(uintptr(unsafe.Pointer(&f_getmsg)), 4,
+		uintptr(fd), ctlptr, dataptr, flagsp, 0, 0)
+
+	r = int(r0)
+	if e0 != 0 {
+		err = e0
+	}
+
+	return
+}
