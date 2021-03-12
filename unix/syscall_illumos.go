@@ -77,16 +77,6 @@ func Accept4(fd int, flags int) (nfd int, sa Sockaddr, err error) {
 	return
 }
 
-//go:cgo_import_dynamic libc_putmsg putmsg "libc.so"
-//go:cgo_import_dynamic libc_getmsg getmsg "libc.so"
-//go:linkname f_putmsg libc_putmsg
-//go:linkname f_getmsg libc_getmsg
-
-var (
-	f_putmsg uintptr
-	f_getmsg uintptr
-)
-
 func Ioctl(fd int, req uint, arg uintptr) (r int, err error) {
 	r0, _, e0 := sysvicall6(uintptr(unsafe.Pointer(&procioctl)), 3,
 		uintptr(fd), uintptr(req), arg, 0, 0, 0)
@@ -99,28 +89,53 @@ func Ioctl(fd int, req uint, arg uintptr) (r int, err error) {
 	return
 }
 
-func Putmsg(fd int, ctlptr uintptr, dataptr uintptr, flags int) (
-	r int, err error) {
-	r0, _, e0 := sysvicall6(uintptr(unsafe.Pointer(&f_putmsg)), 4,
-		uintptr(fd), ctlptr, dataptr, uintptr(flags), 0, 0)
 
-	r = int(r0)
-	if e0 != 0 {
-		err = e0
+//sys	putmsg(fd int, clptr *strbuf, dataptr *strbuf, flags int) (err error)
+
+func Putmsg(fd int, cl []byte, data []byte, flags int) (err error) {
+	var clp strbuf
+	if len(cl) > 0 {
+		clp = strbuf{
+			Len: int32(len(cl)),
+			Buf: (*int8)(unsafe.Pointer(&cl[0])),
+		}
 	}
-
-	return
+	var datap strbuf
+	if len(data) > 0 {
+		datap = strbuf{
+			Len: int32(len(data)),
+			Buf: (*int8)(unsafe.Pointer(&data[0])),
+		}
+	}
+	return putmsg(fd, &clp, &datap, flags)
 }
 
-func Getmsg(fd int, ctlptr uintptr, dataptr uintptr, flagsp uintptr) (
-	r int, err error) {
-	r0, _, e0 := sysvicall6(uintptr(unsafe.Pointer(&f_getmsg)), 4,
-		uintptr(fd), ctlptr, dataptr, flagsp, 0, 0)
+//sys	getmsg(fd int, clptr *strbuf, dataptr *strbuf, flags *int) (err error)
 
-	r = int(r0)
-	if e0 != 0 {
-		err = e0
+func Getmsg(fd int, cl []byte, data []byte) (retCl []byte, retData []byte, flags int, err error) {
+	var clp, datap *strbuf
+	if len(cl) > 0 {
+		clp = &strbuf{
+			Maxlen: int32(len(cl)),
+			Buf: (*int8)(unsafe.Pointer(&cl[0])),
+		}
+	}
+	if len(data) > 0 {
+		datap = &strbuf{
+			Maxlen: int32(len(data)),
+			Buf: (*int8)(unsafe.Pointer(&data[0])),
+		}
 	}
 
-	return
+	if err = getmsg(fd, clp, datap, &flags); err != nil {
+		return nil, nil, 0, err
+	}
+
+	if len(cl) > 0 {
+		retCl = cl[:clp.Len]
+	}
+	if len(data) > 0 {
+		retData = data[:datap.Len]
+	}
+	return retCl, retData, flags, nil
 }

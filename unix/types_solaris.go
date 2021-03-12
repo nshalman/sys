@@ -55,6 +55,7 @@ package unix
 #include <netinet/tcp.h>
 #include <ustat.h>
 #include <utime.h>
+#include <stropts.h>
 
 enum {
 	sizeofPtr = sizeof(void*),
@@ -97,6 +98,8 @@ type (
 	_C_long_long C.longlong
 )
 
+type strbuf C.struct_strbuf
+
 // Time
 
 type Timespec C.struct_timespec
@@ -130,6 +133,8 @@ type Dirent C.struct_dirent
 type _Fsblkcnt_t C.fsblkcnt_t
 
 type Statvfs_t C.struct_statvfs
+
+
 
 // Sockets
 
