@@ -56,6 +56,7 @@ package unix
 #include <ustat.h>
 #include <utime.h>
 #include <stropts.h>
+#include <sys/sockio.h>
 
 enum {
 	sizeofPtr = sizeof(void*),
@@ -74,6 +75,8 @@ struct sockaddr_any {
 	char pad[sizeof(union sockaddr_all) - sizeof(struct sockaddr)];
 };
 
+#define TUNNEWPPA	(('T'<<16) | 0x0001)
+#define TUNSETPPA	(('T'<<16) | 0x0002)
 */
 import "C"
 
@@ -97,8 +100,6 @@ type (
 	_C_long      C.long
 	_C_long_long C.longlong
 )
-
-type strbuf C.struct_strbuf
 
 // Time
 
@@ -133,8 +134,6 @@ type Dirent C.struct_dirent
 type _Fsblkcnt_t C.fsblkcnt_t
 
 type Statvfs_t C.struct_statvfs
-
-
 
 // Sockets
 
@@ -273,4 +272,32 @@ const (
 	POLLRDNORM = C.POLLRDNORM
 	POLLWRBAND = C.POLLWRBAND
 	POLLWRNORM = C.POLLWRNORM
+)
+
+// TODO: relocate as appropriate
+
+type strbuf C.struct_strbuf
+
+type strioctl C.struct_strioctl
+
+const (
+	/*
+	 * sys/stropts.h:
+	 */
+	I_STR     = C.I_STR
+	I_POP     = C.I_POP
+	I_PUSH    = C.I_PUSH
+	I_PLINK   = C.I_PLINK
+	I_PUNLINK = C.I_PUNLINK
+
+	/*
+	 * sys/sockio.h:
+	 */
+	IF_UNITSEL = C.IF_UNITSEL
+
+	/* These already come from the errors file?!
+	SIOCSLIFMUXID = C.SIOCSLIFMUXID
+	SIOCGLIFMUXID = C.SIOCGLIFMUXID
+	SIOCGLIFINDEX = C.SIOCGLIFINDEX
+	*/
 )
