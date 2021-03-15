@@ -454,6 +454,13 @@ type strioctl struct {
 	Dp     *int8
 }
 
+type lifreq struct {
+	Name   [32]int8
+	Lifru1 [4]byte
+	Type   uint32
+	Lifru  [336]byte
+}
+
 const (
 	I_STR     = 0x5308
 	I_POP     = 0x5303

@@ -77,19 +77,6 @@ func Accept4(fd int, flags int) (nfd int, sa Sockaddr, err error) {
 	return
 }
 
-func Ioctl(fd int, req uint, arg uintptr) (r int, err error) {
-	r0, _, e0 := sysvicall6(uintptr(unsafe.Pointer(&procioctl)), 3,
-		uintptr(fd), uintptr(req), arg, 0, 0, 0)
-
-	r = int(r0)
-	if e0 != 0 {
-		err = e0
-	}
-
-	return
-}
-
-
 //sys	putmsg(fd int, clptr *strbuf, dataptr *strbuf, flags int) (err error)
 
 func Putmsg(fd int, cl []byte, data []byte, flags int) (err error) {
@@ -117,13 +104,13 @@ func Getmsg(fd int, cl []byte, data []byte) (retCl []byte, retData []byte, flags
 	if len(cl) > 0 {
 		clp = &strbuf{
 			Maxlen: int32(len(cl)),
-			Buf: (*int8)(unsafe.Pointer(&cl[0])),
+			Buf:    (*int8)(unsafe.Pointer(&cl[0])),
 		}
 	}
 	if len(data) > 0 {
 		datap = &strbuf{
 			Maxlen: int32(len(data)),
-			Buf: (*int8)(unsafe.Pointer(&data[0])),
+			Buf:    (*int8)(unsafe.Pointer(&data[0])),
 		}
 	}
 
@@ -138,4 +125,18 @@ func Getmsg(fd int, cl []byte, data []byte) (retCl []byte, retData []byte, flags
 		retData = data[:datap.Len]
 	}
 	return retCl, retData, flags, nil
+}
+
+func IoctlPlink(fd int, other_fd int) (int, error) {
+	ip_muxid, err := ioctl_get_return(fd, I_PLINK, uintptr(other_fd))
+	if err != nil {
+		return -1, err
+	}
+
+	return ip_muxid, nil
+}
+
+func Ioctl(fd int, req uint, arg uintptr) (r int, err error) {
+	r, err = ioctl_get_return(fd, req, arg)
+	return r, err
 }

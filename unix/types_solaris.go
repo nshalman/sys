@@ -280,6 +280,8 @@ type strbuf C.struct_strbuf
 
 type strioctl C.struct_strioctl
 
+type lifreq C.struct_lifreq
+
 const (
 	/*
 	 * sys/stropts.h:
@@ -294,10 +296,4 @@ const (
 	 * sys/sockio.h:
 	 */
 	IF_UNITSEL = C.IF_UNITSEL
-
-	/* These already come from the errors file?!
-	SIOCSLIFMUXID = C.SIOCSLIFMUXID
-	SIOCGLIFMUXID = C.SIOCGLIFMUXID
-	SIOCGLIFINDEX = C.SIOCGLIFINDEX
-	*/
 )

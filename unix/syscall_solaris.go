@@ -565,7 +565,12 @@ func Minor(dev uint64) uint32 {
  * Expose the ioctl function
  */
 
-//sys	ioctl(fd int, req uint, arg uintptr) (err error)
+//sys	ioctl_get_return(fd int, req uint, arg uintptr) (r int, err error) = libc.ioctl
+
+func ioctl(fd int, req uint, arg uintptr) (err error) {
+	_, err = ioctl_get_return(fd, req, arg)
+	return err
+}
 
 func IoctlSetTermio(fd int, req uint, value *Termio) error {
 	err := ioctl(fd, req, uintptr(unsafe.Pointer(value)))
