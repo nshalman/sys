@@ -10,6 +10,8 @@
 package unix
 
 import (
+	"fmt"
+	"runtime"
 	"unsafe"
 )
 
@@ -126,4 +128,80 @@ func Getmsg(fd int, cl []byte, data []byte) (retCl []byte, retData []byte, flags
 		retData = data[:datap.Len]
 	}
 	return retCl, retData, flags, nil
+}
+
+func IoctlPlink(fd, other_fd int) (int, error) {
+	muxid, err := ioctlRet(fd, I_PLINK, uintptr(other_fd))
+	if err != nil {
+		return -1, err
+	}
+
+	return muxid, nil
+}
+
+func IoctlPunlink(fd, muxid int) error {
+	return ioctl(fd, I_PUNLINK, uintptr(muxid))
+}
+
+func IoctlGetIPMuxID(fd int, name string) (int, error) {
+	var req lifreq
+	if len(name) >= len(req.Name) {
+		return -1, fmt.Errorf("name cannot be more than %d characters", len(req.Name)-1)
+	}
+	for i := range name {
+		req.Name[i] = int8(name[i])
+	}
+
+	// In the ioctl syscall definition, req is a uint, but on Illumos
+	// it's an int. This means that the SIOCGLIFMUXID constant is
+	// defined as negative, and can't be used inline in the ioctl
+	// call. We have to explicitly initialize an int and then cast
+	// that to uint.
+	reqnum := int(SIOCGLIFMUXID)
+	if err := ioctl(fd, uint(reqnum), uintptr(unsafe.Pointer(&req))); err != nil {
+		return -1, err
+	}
+
+	id := *(*int)(unsafe.Pointer(&req.Lifru[0]))
+	return id, nil
+}
+
+func IoctlSetIPMuxID(fd int, name string, muxID int) error {
+	var req lifreq
+	if len(name) >= len(req.Name) {
+		return fmt.Errorf("name cannot be more than %d characters", len(req.Name)-1)
+	}
+	for i := range name {
+		req.Name[i] = int8(name[i])
+	}
+	*(*int)(unsafe.Pointer(&req.Lifru[0])) = muxID
+
+	// In the ioctl syscall definition, req is a uint, but on Illumos
+	// it's an int. This means that the SIOCSLIFMUXID constant is
+	// defined as negative, and can't be used inline in the ioctl
+	// call. We have to explicitly initialize an int and then cast
+	// that to uint.
+	reqnum := int(SIOCSLIFMUXID)
+	err := ioctl(fd, uint(reqnum), uintptr(unsafe.Pointer(&req)))
+	runtime.KeepAlive(&req)
+	return err
+}
+
+func IoctlSetString(fd int, req uint, val string) error {
+	bs := make([]byte, len(val)+1)
+	copy(bs[:len(bs)-1], val)
+	err := ioctl(fd, req, uintptr(unsafe.Pointer(&bs[0])))
+	runtime.KeepAlive(&bs[0])
+	return err
+}
+
+func IoctlTunNewPPA(fd int, ppaNum int) (ppa int, err error) {
+	var req strioctl
+	req.Cmd = TUNNEWPPA
+	req.Len = int32(unsafe.Sizeof(ppaNum))
+	req.Dp = (*int8)(unsafe.Pointer(&ppaNum))
+
+	ppa, err = ioctlRet(fd, I_STR, uintptr(unsafe.Pointer(&req)))
+	runtime.KeepAlive(&req)
+	return ppa, err
 }
