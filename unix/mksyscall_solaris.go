@@ -105,6 +105,11 @@ func main() {
 	dynimports := ""
 	linknames := ""
 	var vars []string
+	curImport := ""
+	curLink := ""
+	prevImport := ""
+	prevLink := ""
+	prevVar := ""
 	for _, path := range flag.Args() {
 		file, err := os.Open(path)
 		if err != nil {
@@ -163,12 +168,22 @@ func main() {
 			sysname = strings.ToLower(sysname) // All libc functions are lowercase.
 
 			// Runtime import of function to allow cross-platform builds.
-			dynimports += fmt.Sprintf("//go:cgo_import_dynamic libc_%s %s \"%s.so\"\n", sysname, sysname, modname)
+			curImport = fmt.Sprintf("//go:cgo_import_dynamic libc_%s %s \"%s.so\"\n", sysname, sysname, modname)
+			if curImport != prevImport {
+				dynimports += curImport
+				prevImport = curImport
+			}
 			// Link symbol to proc address variable.
-			linknames += fmt.Sprintf("//go:linkname %s libc_%s\n", sysvarname, sysname)
+			curLink = fmt.Sprintf("//go:linkname %s libc_%s\n", sysvarname, sysname)
+			if curLink != prevLink {
+				linknames += curLink
+				prevLink = curLink
+			}
 			// Library proc address variable.
-			vars = append(vars, sysvarname)
-
+			if sysvarname != prevVar {
+				vars = append(vars, sysvarname)
+				prevVar = sysvarname
+			}
 			// Go function header.
 			outlist := strings.Join(out, ", ")
 			if outlist != "" {
