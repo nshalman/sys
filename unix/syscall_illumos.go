@@ -10,6 +10,8 @@
 package unix
 
 import (
+	"fmt"
+	"runtime"
 	"unsafe"
 )
 
@@ -126,4 +128,53 @@ func Getmsg(fd int, cl []byte, data []byte) (retCl []byte, retData []byte, flags
 		retData = data[:datap.Len]
 	}
 	return retCl, retData, flags, nil
+}
+
+func IoctlSetIntRetInt(fd int, req uint, arg int) (int, error) {
+	return ioctlRet(fd, req, uintptr(arg))
+}
+
+func IoctlSetString(fd int, req uint, val string) error {
+	bs := make([]byte, len(val)+1)
+	copy(bs[:len(bs)-1], val)
+	err := ioctl(fd, req, uintptr(unsafe.Pointer(&bs[0])))
+	runtime.KeepAlive(&bs[0])
+	return err
+}
+
+// Lifreq Helpers
+
+func (l *Lifreq) SetName(name string) error {
+	if len(name) >= len(l.Name) {
+		fmt.Errorf("name cannot be more than %d characters", len(l.Name)-1)
+	}
+	for i := range name {
+		l.Name[i] = int8(name[i])
+	}
+	return nil
+}
+
+func (l *Lifreq) SetLifruInt(d int) {
+	*(*int)(unsafe.Pointer(&l.Lifru[0])) = d
+}
+
+func (l *Lifreq) GetLifruInt() int {
+	return *(*int)(unsafe.Pointer(&l.Lifru[0]))
+}
+
+func IoctlLifreq(fd int, req uint, l *Lifreq) error {
+	return ioctl(fd, req, uintptr(unsafe.Pointer(l)))
+}
+
+// Strioctl Helpers
+
+func (s *Strioctl) SetInt(i int) {
+	s.Len = int32(unsafe.Sizeof(i))
+	s.Dp = (*int8)(unsafe.Pointer(&i))
+}
+
+func IoctlSetStrioctlRetInt(fd int, req uint, s Strioctl) (ret int, err error) {
+	ret, err = ioctlRet(fd, req, uintptr(unsafe.Pointer(&s)))
+	runtime.KeepAlive(&s)
+	return ret, err
 }
