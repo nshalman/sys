@@ -211,7 +211,7 @@ func CreateFileObj(name string, stat os.FileInfo) (*FileObj, error) {
 	if err != nil {
 		return nil, err
 	}
-	fobj.Name = (*int8)(unsafe.Pointer(&bs))
+	fobj.Name = (*int8)(unsafe.Pointer(&bs[0]))
 	fobj.Atim.Sec = stat.Sys().(*syscall.Stat_t).Atim.Sec
 	fobj.Atim.Nsec = stat.Sys().(*syscall.Stat_t).Atim.Nsec
 	fobj.Mtim.Sec = stat.Sys().(*syscall.Stat_t).Mtim.Sec
@@ -222,7 +222,7 @@ func CreateFileObj(name string, stat os.FileInfo) (*FileObj, error) {
 }
 
 func (f *FileObj) GetName() string {
-	return ByteSliceToString(*(*[]byte)(unsafe.Pointer(f.Name)))
+	return BytePtrToString((*byte)(unsafe.Pointer(f.Name)))
 }
 
 //sys	port_get(port int, pe *PortEvent, timeout *Timespec) (n int, err error)
