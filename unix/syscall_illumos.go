@@ -230,3 +230,14 @@ func (f *FileObj) GetName() string {
 func PortGet(port int, pe *PortEvent, t *Timespec) (n int, err error) {
 	return port_get(port, pe, t)
 }
+
+func (pe *PortEvent) GetFileObj() (f *FileObj, err error) {
+	if pe.Source != PORT_SOURCE_FILE {
+		return nil, fmt.Errorf("Event source must be PORT_SOURCE_FILE for there to be a FileObj")
+	}
+	return (*FileObj)(unsafe.Pointer(uintptr(pe.Object))), nil
+}
+
+func (pe *PortEvent) GetUser() unsafe.Pointer {
+	return unsafe.Pointer(pe.User)
+}
