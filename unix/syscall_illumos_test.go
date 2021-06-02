@@ -57,11 +57,11 @@ func TestBasicEventPort(t *testing.T) {
 		t.Errorf("CreateFileObj failed: %v", err)
 	}
 	_, err = unix.PortAssociateFileObj(port, fobj, unix.FILE_MODIFIED, unsafe.Pointer(&fmode))
-	name := fobj.GetName()
-	if path != name {
-		t.Errorf(`Can't get name back out: "%s" "%s"`, path, name)
-	}
 	if err != nil {
 		t.Errorf("PortAssociateFileObj failed: %v", err)
+	}
+	_, err = unix.PortDissociateFileObj(port, fobj)
+	if err != nil {
+		t.Errorf("PortDissociateFileObj failed: %v", err)
 	}
 }
