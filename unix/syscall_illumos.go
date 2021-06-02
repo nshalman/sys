@@ -11,7 +11,9 @@ package unix
 
 import (
 	"fmt"
+	"os"
 	"runtime"
+	"syscall"
 	"unsafe"
 )
 
@@ -175,4 +177,56 @@ func (s *Strioctl) SetInt(i int) {
 
 func IoctlSetStrioctlRetInt(fd int, req uint, s *Strioctl) (int, error) {
 	return ioctlRet(fd, req, uintptr(unsafe.Pointer(s)))
+}
+
+// Event Ports
+
+//sys	port_create() (n int, err error)
+
+func PortCreate() (int, error) {
+	return port_create()
+}
+
+//sys	port_associate(port int, source int, object uintptr, events int, user unsafe.Pointer) (n int, err error)
+
+//TODO
+//func PortAssociateFd(port int, fd int, events int, user unsafe.Pointer) (n int, err error)
+
+func PortAssociateFileObj(port int, f *FileObj, events int, user unsafe.Pointer) (int, error) {
+	return port_associate(port, PORT_SOURCE_FILE, uintptr(unsafe.Pointer(f)), events, user)
+}
+
+//sys	port_dissociate(port int, source int, object uintptr) (n int, err error)
+
+//TODO
+//func PortDissociateFd(port int, fd int) (n int, err error)
+
+func PortDissociateFileObj(port int, f *FileObj) (int, error) {
+	return port_dissociate(port, PORT_SOURCE_FILE, uintptr(unsafe.Pointer(f)))
+}
+
+func CreateFileObj(name string, stat os.FileInfo) (*FileObj, error) {
+	fobj := new(FileObj)
+	bs, err := ByteSliceFromString(name)
+	if err != nil {
+		return nil, err
+	}
+	fobj.Name = (*int8)(unsafe.Pointer(&bs))
+	fobj.Atim.Sec = stat.Sys().(*syscall.Stat_t).Atim.Sec
+	fobj.Atim.Nsec = stat.Sys().(*syscall.Stat_t).Atim.Nsec
+	fobj.Mtim.Sec = stat.Sys().(*syscall.Stat_t).Mtim.Sec
+	fobj.Mtim.Nsec = stat.Sys().(*syscall.Stat_t).Mtim.Nsec
+	fobj.Ctim.Sec = stat.Sys().(*syscall.Stat_t).Ctim.Sec
+	fobj.Ctim.Nsec = stat.Sys().(*syscall.Stat_t).Ctim.Nsec
+	return fobj, nil
+}
+
+func (f *FileObj) GetName() string {
+	return ByteSliceToString(*(*[]byte)(unsafe.Pointer(f.Name)))
+}
+
+//sys	port_get(port int, pe *PortEvent, timeout *Timespec) (n int, err error)
+
+func PortGet(port int, pe *PortEvent, t *Timespec) (n int, err error) {
+	return port_get(port, pe, t)
 }
