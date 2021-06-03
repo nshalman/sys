@@ -8,7 +8,11 @@
 package unix_test
 
 import (
+	"fmt"
+	"io/ioutil"
+	"os"
 	"os/exec"
+	"runtime"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -40,4 +44,185 @@ func TestSysconf(t *testing.T) {
 		t.Fatalf("Sysconf: %v", err)
 	}
 	t.Logf("Sysconf(SC_CLK_TCK) = %d", n)
+}
+
+// Event Ports
+
+func TestBasicEventPort(t *testing.T) {
+	tmpfile, err := ioutil.TempFile("", "eventport")
+	if err != nil {
+		t.Errorf("unable to create a tempfile: %v", err)
+	}
+	path := tmpfile.Name()
+	defer os.Remove(path)
+
+	stat, err := os.Stat(path)
+	if err != nil {
+		t.Errorf("Failed to stat %s: %v", path, err)
+	}
+	port, err := unix.NewEventPort()
+	if err != nil {
+		t.Errorf("NewEventPort failed: %v", err)
+	}
+	defer port.Close()
+	var cookie unix.EventPortUserCookie = stat.Mode()
+	err = port.AssociatePath(path, stat, unix.FILE_MODIFIED, &cookie)
+	if err != nil {
+		t.Errorf("AssociatePath failed: %v", err)
+	}
+	if !port.PathIsWatched(path) {
+		t.Errorf("PathIsWatched unexpectedly returned false")
+	}
+	err = port.DissociatePath(path)
+	if err != nil {
+		t.Errorf("DissociatePath failed: %v", err)
+	}
+	err = port.AssociatePath(path, stat, unix.FILE_MODIFIED, &cookie)
+	if err != nil {
+		t.Errorf("AssociatePath failed: %v", err)
+	}
+	bs := []byte{42}
+	tmpfile.Write(bs)
+	timeout := new(unix.Timespec)
+	timeout.Sec = 1
+	pevent, err := port.Get(timeout)
+	if err == unix.ETIME {
+		t.Errorf("PortGet timed out: %v", err)
+	}
+	if err != nil {
+		t.Errorf("PortGet failed: %v", err)
+	}
+	if pevent.Path != path {
+		t.Errorf("Path mismatch: %v != %v", pevent.Path, path)
+	}
+	err = port.AssociatePath(path, stat, unix.FILE_MODIFIED, &cookie)
+	if err != nil {
+		t.Errorf("AssociatePath failed: %v", err)
+	}
+	err = port.AssociatePath(path, stat, unix.FILE_MODIFIED, &cookie)
+	if err == nil {
+		t.Errorf("Unexpected success associating already associated path")
+	}
+}
+
+func TestEventPortFds(t *testing.T) {
+	_, path, _, _ := runtime.Caller(0)
+	stat, err := os.Stat(path)
+	fmode := stat.Mode()
+	port, err := unix.NewEventPort()
+	if err != nil {
+		t.Errorf("NewEventPort failed: %v", err)
+	}
+	defer port.Close()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Errorf("unable to create a pipe: %v", err)
+	}
+	defer w.Close()
+	defer r.Close()
+	fd := r.Fd()
+
+	var cookie unix.EventPortUserCookie = fmode
+	port.AssociateFd(fd, unix.POLLIN, &cookie)
+	if !port.FdIsWatched(fd) {
+		t.Errorf("FdIsWatched unexpectedly returned false")
+	}
+	err = port.DissociateFd(fd)
+	err = port.AssociateFd(fd, unix.POLLIN, &cookie)
+	bs := []byte{42}
+	w.Write(bs)
+	timeout := new(unix.Timespec)
+	timeout.Sec = 1
+	pevent, err := port.Get(timeout)
+	if err == unix.ETIME {
+		t.Errorf("PortGet timed out: %v", err)
+	}
+	if err != nil {
+		t.Errorf("PortGet failed: %v", err)
+	}
+	if pevent.Fd != fd {
+		t.Errorf("Fd mismatch: %v != %v", pevent.Fd, fd)
+	}
+	var c = pevent.Cookie
+	if c == nil {
+		t.Errorf("Cookie missing: %v != %v", &cookie, c)
+		return
+	}
+	if *c != cookie {
+		t.Errorf("Cookie mismatch: %v != %v", cookie, *c)
+	}
+	port.AssociateFd(fd, unix.POLLIN, &cookie)
+	err = port.AssociateFd(fd, unix.POLLIN, &cookie)
+	if err == nil {
+		t.Errorf("unexpected success associating already associated fd")
+	}
+}
+
+func TestEventPortErrors(t *testing.T) {
+	tmpfile, err := ioutil.TempFile("", "eventport")
+	if err != nil {
+		t.Errorf("unable to create a tempfile: %v", err)
+	}
+	path := tmpfile.Name()
+	stat, _ := os.Stat(path)
+	os.Remove(path)
+	port, _ := unix.NewEventPort()
+	defer port.Close()
+	err = port.AssociatePath(path, stat, unix.FILE_MODIFIED, nil)
+	if err == nil {
+		t.Errorf("unexpected success associating nonexistant file")
+	}
+	err = port.DissociatePath(path)
+	if err == nil {
+		t.Errorf("unexpected success dissociating unassociated path")
+	}
+	timeout := new(unix.Timespec)
+	timeout.Nsec = 1
+	_, err = port.Get(timeout)
+	if err != unix.ETIME {
+		t.Errorf("unexpected lack of timeout")
+	}
+	err = port.DissociateFd(uintptr(0))
+	if err == nil {
+		t.Errorf("unexpected success dissociating unassociated fd")
+	}
+}
+
+func ExampleEventPortUserCookie() {
+	type MyCookie struct {
+		Name string
+	}
+	mycookie := MyCookie{"Cookie Monster"}
+	port, err := unix.NewEventPort()
+	if err != nil {
+		fmt.Printf("NewEventPort failed: %v\n", err)
+		return
+	}
+	defer port.Close()
+	r, w, err := os.Pipe()
+	if err != nil {
+		fmt.Printf("os.Pipe() failed: %v\n", err)
+		return
+	}
+	defer w.Close()
+	defer r.Close()
+	fd := r.Fd()
+
+	// cast mycookie as EventPortUserCookie
+	var cookie unix.EventPortUserCookie = mycookie
+	port.AssociateFd(fd, unix.POLLIN, &cookie)
+
+	bs := []byte{42}
+	w.Write(bs)
+	timeout := new(unix.Timespec)
+	timeout.Sec = 1
+	pevent, err := port.Get(timeout)
+	if err != nil {
+		fmt.Printf("didn't get the expected event: %v\n", err)
+	}
+
+	// cast the received cookie back to its original type
+	c := (*pevent.Cookie).(MyCookie)
+	fmt.Printf("%s", c.Name)
+	//Output: Cookie Monster
 }
