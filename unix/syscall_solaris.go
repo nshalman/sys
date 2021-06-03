@@ -13,7 +13,10 @@
 package unix
 
 import (
+	"fmt"
+	"os"
 	"runtime"
+	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -743,4 +746,186 @@ func Mmap(fd int, offset int64, length int, prot int, flags int) (data []byte, e
 
 func Munmap(b []byte) (err error) {
 	return mapper.Munmap(b)
+}
+
+// Event Ports
+
+type EventPortUserCookie interface{}
+
+type EventPort struct {
+	port  int
+	fds   map[uintptr]*EventPortUserCookie
+	paths map[string]*fileObj
+	fobjs map[*fileObj]*EventPortUserCookie
+	mu    sync.Mutex
+}
+
+type PortEvent struct {
+	Cookie *EventPortUserCookie
+	Events int32 //must match portEvent.Events
+	Fd     uintptr
+	Path   string
+	Source uint16 //must match portEvent.Source
+	fobj   *fileObj
+}
+
+func NewEventPort() (*EventPort, error) {
+	port, err := port_create()
+	if err != nil {
+		return nil, err
+	}
+	e := new(EventPort)
+	e.port = port
+	e.fds = make(map[uintptr]*EventPortUserCookie)
+	e.paths = make(map[string]*fileObj)
+	e.fobjs = make(map[*fileObj]*EventPortUserCookie)
+	return e, nil
+}
+
+//sys	port_create() (n int, err error)
+//sys	port_associate(port int, source int, object uintptr, events int, user *byte) (n int, err error)
+//sys	port_dissociate(port int, source int, object uintptr) (n int, err error)
+//sys	port_get(port int, pe *portEvent, timeout *Timespec) (n int, err error)
+
+func (e *EventPort) Close() error {
+	for f, _ := range e.fds {
+		e.DissociateFd(f)
+	}
+	for p, _ := range e.paths {
+		e.DissociatePath(p)
+	}
+	return Close(e.port)
+}
+
+func (e *EventPort) PathIsWatched(path string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, found := e.paths[path]
+	return found
+}
+
+func (e *EventPort) FdIsWatched(fd uintptr) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, found := e.fds[fd]
+	return found
+}
+
+func (e *EventPort) AssociatePath(path string, stat os.FileInfo, events int, cookie *EventPortUserCookie) error {
+	if e.PathIsWatched(path) {
+		return fmt.Errorf("%v is already associated with this Event Port", path)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	fobj, err := createFileObj(path, stat)
+	if err != nil {
+		return err
+	}
+	_, err = port_associate(e.port, PORT_SOURCE_FILE, uintptr(unsafe.Pointer(fobj)), events, (*byte)(unsafe.Pointer(cookie)))
+	if err != nil {
+		return err
+	}
+	e.paths[path] = fobj
+	e.fobjs[fobj] = cookie
+	return nil
+}
+
+func (e *EventPort) deletePath(path string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.fobjs, e.paths[path])
+	delete(e.paths, path)
+}
+
+func (e *EventPort) DissociatePath(path string) error {
+	if !e.PathIsWatched(path) {
+		return fmt.Errorf("%v is not associated with this Event Port", path)
+	}
+	e.mu.Lock()
+	_, err := port_dissociate(e.port, PORT_SOURCE_FILE, uintptr(unsafe.Pointer(e.paths[path])))
+	e.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	e.deletePath(path)
+	return nil
+}
+
+func (e *EventPort) AssociateFd(fd uintptr, events int, cookie *EventPortUserCookie) error {
+	if e.FdIsWatched(fd) {
+		return fmt.Errorf("%v is already associated with this Event Port", fd)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, err := port_associate(e.port, PORT_SOURCE_FD, fd, events, (*byte)(unsafe.Pointer(cookie)))
+	if err != nil {
+		return err
+	}
+	e.fds[fd] = cookie
+	return nil
+}
+
+func (e *EventPort) deleteFd(fd uintptr) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.fds, fd)
+}
+
+func (e *EventPort) DissociateFd(fd uintptr) error {
+	if !e.FdIsWatched(fd) {
+		return fmt.Errorf("%v is not associated with this Event Port", fd)
+	}
+	_, err := port_dissociate(e.port, PORT_SOURCE_FD, fd)
+	if err != nil {
+		return err
+	}
+	e.deleteFd(fd)
+	return nil
+}
+
+func createFileObj(name string, stat os.FileInfo) (*fileObj, error) {
+	fobj := new(fileObj)
+	bs, err := ByteSliceFromString(name)
+	if err != nil {
+		return nil, err
+	}
+	fobj.Name = (*int8)(unsafe.Pointer(&bs[0]))
+	fobj.Atim.Sec = stat.Sys().(*syscall.Stat_t).Atim.Sec
+	fobj.Atim.Nsec = stat.Sys().(*syscall.Stat_t).Atim.Nsec
+	fobj.Mtim.Sec = stat.Sys().(*syscall.Stat_t).Mtim.Sec
+	fobj.Mtim.Nsec = stat.Sys().(*syscall.Stat_t).Mtim.Nsec
+	fobj.Ctim.Sec = stat.Sys().(*syscall.Stat_t).Ctim.Sec
+	fobj.Ctim.Nsec = stat.Sys().(*syscall.Stat_t).Ctim.Nsec
+	return fobj, nil
+}
+
+func (f *fileObj) Path() string {
+	return BytePtrToString((*byte)(unsafe.Pointer(f.Name)))
+}
+
+func (e *EventPort) Get(t *Timespec) (*PortEvent, error) {
+	pe := new(portEvent)
+	_, err := port_get(e.port, pe, t)
+	if err != nil {
+		return nil, err
+	}
+	p := new(PortEvent)
+	p.Events = pe.Events
+	p.Source = pe.Source
+	switch pe.Source {
+	case PORT_SOURCE_FD:
+		p.Fd = uintptr(pe.Object)
+		e.mu.Lock()
+		p.Cookie = e.fds[p.Fd]
+		e.mu.Unlock()
+		e.deleteFd(p.Fd)
+	case PORT_SOURCE_FILE:
+		p.fobj = (*fileObj)(unsafe.Pointer(uintptr(pe.Object)))
+		p.Path = p.fobj.Path()
+		e.mu.Lock()
+		p.Cookie = e.fobjs[p.fobj]
+		e.mu.Unlock()
+		e.deletePath(p.Path)
+	}
+	return p, nil
 }
