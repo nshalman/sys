@@ -13,6 +13,8 @@
 package unix
 
 import (
+	"fmt"
+	"os"
 	"runtime"
 	"syscall"
 	"unsafe"
@@ -743,4 +745,82 @@ func Mmap(fd int, offset int64, length int, prot int, flags int) (data []byte, e
 
 func Munmap(b []byte) (err error) {
 	return mapper.Munmap(b)
+}
+
+// Event Ports
+
+//sys	port_create() (n int, err error)
+
+func PortCreate() (int, error) {
+	return port_create()
+}
+
+/*
+When using the port_associate wrappers it may be tempting to pass entire structs
+into the user cookie. Experimentally, sometimes what you place there will be
+garbage collected so it is not recommended.
+*/
+
+//sys	port_associate(port int, source int, object uintptr, events int, user *byte) (n int, err error)
+
+func PortAssociateFd(port int, fd int, events int, user *byte) (n int, err error) {
+	return port_associate(port, PORT_SOURCE_FD, (uintptr)(fd), events, user)
+}
+
+func PortAssociateFileObj(port int, f *FileObj, events int, user *byte) (int, error) {
+	return port_associate(port, PORT_SOURCE_FILE, uintptr(unsafe.Pointer(f)), events, user)
+}
+
+//sys	port_dissociate(port int, source int, object uintptr) (n int, err error)
+
+func PortDissociateFd(port int, fd int) (n int, err error) {
+	return port_dissociate(port, PORT_SOURCE_FD, (uintptr)(fd))
+}
+
+func PortDissociateFileObj(port int, f *FileObj) (int, error) {
+	return port_dissociate(port, PORT_SOURCE_FILE, uintptr(unsafe.Pointer(f)))
+}
+
+func CreateFileObj(name string, stat os.FileInfo) (*FileObj, error) {
+	fobj := new(FileObj)
+	bs, err := ByteSliceFromString(name)
+	if err != nil {
+		return nil, err
+	}
+	fobj.Name = (*int8)(unsafe.Pointer(&bs[0]))
+	fobj.Atim.Sec = stat.Sys().(*syscall.Stat_t).Atim.Sec
+	fobj.Atim.Nsec = stat.Sys().(*syscall.Stat_t).Atim.Nsec
+	fobj.Mtim.Sec = stat.Sys().(*syscall.Stat_t).Mtim.Sec
+	fobj.Mtim.Nsec = stat.Sys().(*syscall.Stat_t).Mtim.Nsec
+	fobj.Ctim.Sec = stat.Sys().(*syscall.Stat_t).Ctim.Sec
+	fobj.Ctim.Nsec = stat.Sys().(*syscall.Stat_t).Ctim.Nsec
+	return fobj, nil
+}
+
+func (f *FileObj) GetName() string {
+	return BytePtrToString((*byte)(unsafe.Pointer(f.Name)))
+}
+
+//sys	port_get(port int, pe *PortEvent, timeout *Timespec) (n int, err error)
+
+func PortGet(port int, pe *PortEvent, t *Timespec) (n int, err error) {
+	return port_get(port, pe, t)
+}
+
+func (pe *PortEvent) GetFileObj() (f *FileObj, err error) {
+	if pe.Source != PORT_SOURCE_FILE {
+		return nil, fmt.Errorf("Event source must be PORT_SOURCE_FILE for there to be a FileObj")
+	}
+	return (*FileObj)(unsafe.Pointer(uintptr(pe.Object))), nil
+}
+
+func (pe *PortEvent) GetFd() (fd int, err error) {
+	if pe.Source != PORT_SOURCE_FD {
+		return -1, fmt.Errorf("Event source must be PORT_SOURCE_FD for there to be a File Descriptor")
+	}
+	return (int)(uintptr(pe.Object)), nil
+}
+
+func (pe *PortEvent) GetUser() *byte {
+	return (*byte)(unsafe.Pointer(pe.User))
 }
