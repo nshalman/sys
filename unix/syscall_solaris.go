@@ -749,12 +749,6 @@ func Munmap(b []byte) (err error) {
 
 // Event Ports
 
-/*
-When using the port_associate wrappers it may be tempting to pass entire structs
-into the user cookie. Experimentally, sometimes what you place there will be
-garbage collected so it is not recommended.
-*/
-
 //sys	port_create() (n int, err error)
 //sys	port_associate(port int, source int, object uintptr, events int, user *byte) (n int, err error)
 //sys	port_dissociate(port int, source int, object uintptr) (n int, err error)
@@ -764,8 +758,8 @@ func PortCreate() (int, error) {
 	return port_create()
 }
 
-func PortAssociateFileObj(port int, f *FileObj, events int, user *byte) (int, error) {
-	return port_associate(port, PORT_SOURCE_FILE, uintptr(unsafe.Pointer(f)), events, user)
+func PortAssociateFileObj(port int, f *FileObj, events int, cookie *byte) (int, error) {
+	return port_associate(port, PORT_SOURCE_FILE, uintptr(unsafe.Pointer(f)), events, cookie)
 }
 
 func PortDissociateFileObj(port int, f *FileObj) (int, error) {
@@ -788,7 +782,7 @@ func CreateFileObj(name string, stat os.FileInfo) (*FileObj, error) {
 	return fobj, nil
 }
 
-func (f *FileObj) GetName() string {
+func (f *FileObj) Path() string {
 	return BytePtrToString((*byte)(unsafe.Pointer(f.Name)))
 }
 
@@ -796,21 +790,16 @@ func PortGet(port int, pe *PortEvent, t *Timespec) (n int, err error) {
 	return port_get(port, pe, t)
 }
 
-func (pe *PortEvent) GetFileObj() (f *FileObj, err error) {
+func (pe *PortEvent) FileObj() (f *FileObj, err error) {
 	if pe.Source != PORT_SOURCE_FILE {
-		return nil, fmt.Errorf("Event source must be PORT_SOURCE_FILE for there to be a FileObj")
+		return nil, fmt.Errorf("event source must be PORT_SOURCE_FILE for there to be a FileObj")
 	}
 	return (*FileObj)(unsafe.Pointer(uintptr(pe.Object))), nil
 }
 
-func (pe *PortEvent) GetUser() *byte {
+func (pe *PortEvent) Cookie() *byte {
 	return (*byte)(unsafe.Pointer(pe.User))
 }
-
-/*
-// While I found example code for fsnotify that used the functions above,
-// I have not found any go/cgo code using event ports and file descriptors
-// so I have no test harness for these functions below
 
 func PortAssociateFd(port int, fd int, events int, user *byte) (n int, err error) {
 	return port_associate(port, PORT_SOURCE_FD, (uintptr)(fd), events, user)
@@ -820,10 +809,9 @@ func PortDissociateFd(port int, fd int) (n int, err error) {
 	return port_dissociate(port, PORT_SOURCE_FD, (uintptr)(fd))
 }
 
-func (pe *PortEvent) GetFd() (fd int, err error) {
+func (pe *PortEvent) Fd() (fd int, err error) {
 	if pe.Source != PORT_SOURCE_FD {
 		return -1, fmt.Errorf("Event source must be PORT_SOURCE_FD for there to be a File Descriptor")
 	}
 	return (int)(uintptr(pe.Object)), nil
 }
-*/

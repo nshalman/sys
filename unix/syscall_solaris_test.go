@@ -54,9 +54,9 @@ func TestCreateFileObj(t *testing.T) {
 		t.Errorf("Failed to stat %s: %v", path, err)
 	}
 	fobj, err := unix.CreateFileObj(path, stat)
-	name := fobj.GetName()
-	if path != name {
-		t.Errorf(`Can't get name back out: "%s" "%s"`, path, name)
+	p := fobj.Path()
+	if path != p {
+		t.Errorf(`Can't get path back out: "%s" "%s"`, path, p)
 	}
 }
 
@@ -83,5 +83,41 @@ func TestBasicEventPort(t *testing.T) {
 	_, err = unix.PortDissociateFileObj(port, fobj)
 	if err != nil {
 		t.Errorf("PortDissociateFileObj failed: %v", err)
+	}
+}
+
+func TestEventPortFds(t *testing.T) {
+	port, err := unix.PortCreate()
+	if err != nil {
+		t.Errorf("PortCreate failed: %d - %v", port, err)
+	}
+	defer unix.Close(port)
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Errorf("unable to create a pipe: %v", err)
+	}
+	defer w.Close()
+	defer r.Close()
+
+	unix.PortAssociateFd(port, int(r.Fd()), unix.POLLIN, nil)
+	defer unix.PortDissociateFd(port, int(r.Fd()))
+	bs := []byte{42}
+	w.Write(bs)
+	timeout := new(unix.Timespec)
+	timeout.Sec = 1
+	var pevent unix.PortEvent
+	_, err = unix.PortGet(port, &pevent, timeout)
+	if err == unix.ETIME {
+		t.Errorf("PortGet timed out: %v", err)
+	}
+	if err != nil {
+		t.Errorf("PortGet failed: %v", err)
+	}
+	fd, err := pevent.Fd()
+	if err != nil {
+		t.Errorf("Unable to retrieve Fd from PortEvent: %v", err)
+	}
+	if fd != int(r.Fd()) {
+		t.Errorf("Fd mismatch: %v != %v", fd, int(r.Fd()))
 	}
 }
