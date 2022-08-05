@@ -751,7 +751,7 @@ type EventPort struct {
 	// reference to the cookie around until the event is processed
 	// thus the otherwise seemingly extraneous "cookies" map
 	// The key of this map is a pointer to the corresponding &fCookie.cookie
-	cookies map[*interface{}]*fileObjCookie
+	cookies map[*fileObjCookie]*fileObjCookie
 }
 
 // PortEvent is an abstraction of the port_event C struct.
@@ -778,7 +778,7 @@ func NewEventPort() (*EventPort, error) {
 		port:    port,
 		fds:     make(map[uintptr]*fileObjCookie),
 		paths:   make(map[string]*fileObjCookie),
-		cookies: make(map[*interface{}]*fileObjCookie),
+		cookies: make(map[*fileObjCookie]*fileObjCookie),
 	}
 	return e, nil
 }
@@ -831,12 +831,12 @@ func (e *EventPort) AssociatePath(path string, stat os.FileInfo, events int, coo
 		return err
 	}
 	fCookie := &fileObjCookie{fobj, cookie}
-	_, err = port_associate(e.port, PORT_SOURCE_FILE, uintptr(unsafe.Pointer(fobj)), events, (*byte)(unsafe.Pointer(&fCookie.cookie)))
+	_, err = port_associate(e.port, PORT_SOURCE_FILE, uintptr(unsafe.Pointer(fobj)), events, (*byte)(unsafe.Pointer(fCookie)))
 	if err != nil {
 		return err
 	}
 	e.paths[path] = fCookie
-	e.cookies[&fCookie.cookie] = fCookie
+	e.cookies[fCookie] = fCookie
 	return nil
 }
 
@@ -858,7 +858,7 @@ func (e *EventPort) DissociatePath(path string) error {
 	if err == nil {
 		// dissociate was successful, safe to delete the cookie
 		fCookie := e.paths[path]
-		delete(e.cookies, &fCookie.cookie)
+		delete(e.cookies, fCookie)
 	}
 	delete(e.paths, path)
 	return err
@@ -872,12 +872,12 @@ func (e *EventPort) AssociateFd(fd uintptr, events int, cookie interface{}) erro
 		return fmt.Errorf("%v is already associated with this Event Port", fd)
 	}
 	fCookie := &fileObjCookie{nil, cookie}
-	_, err := port_associate(e.port, PORT_SOURCE_FD, fd, events, (*byte)(unsafe.Pointer(&fCookie.cookie)))
+	_, err := port_associate(e.port, PORT_SOURCE_FD, fd, events, (*byte)(unsafe.Pointer(fCookie)))
 	if err != nil {
 		return err
 	}
 	e.fds[fd] = fCookie
-	e.cookies[&fCookie.cookie] = fCookie
+	e.cookies[fCookie] = fCookie
 	return nil
 }
 
@@ -896,7 +896,7 @@ func (e *EventPort) DissociateFd(fd uintptr) error {
 	if err == nil {
 		// dissociate was successful, safe to delete the cookie
 		fCookie := e.fds[fd]
-		delete(e.cookies, &fCookie.cookie)
+		delete(e.cookies, fCookie)
 	}
 	delete(e.fds, fd)
 	return err
@@ -938,31 +938,32 @@ func (e *EventPort) GetOne(t *Timespec) (*PortEvent, error) {
 func (e *EventPort) peIntToExt(peInt *portEvent, peExt *PortEvent) {
 	peExt.Events = peInt.Events
 	peExt.Source = peInt.Source
-	cookie := (*interface{})(unsafe.Pointer(peInt.User))
-	peExt.Cookie = *cookie
+	returnedPointer := (*fileObjCookie)(unsafe.Pointer(peInt.User))
+	trustedValue, found := e.cookies[returnedPointer]
+	if !found || returnedPointer != trustedValue {
+		// XXX don't land this debug line:
+		fmt.Printf("found: %v, returnedPointer: %v trustedValue: %v\n", found, returnedPointer, trustedValue)
+		panic("mismanaged memory")
+	}
+	fCookie := trustedValue
+	peExt.Cookie = fCookie.cookie
 	switch peInt.Source {
 	case PORT_SOURCE_FD:
-		delete(e.cookies, cookie)
+		delete(e.cookies, fCookie)
 		peExt.Fd = uintptr(peInt.Object)
 		// Only remove the fds entry if it exists and this cookie matches
 		if fobj, ok := e.fds[peExt.Fd]; ok {
-			if &fobj.cookie == cookie {
+			if fobj == fCookie {
 				delete(e.fds, peExt.Fd)
 			}
 		}
 	case PORT_SOURCE_FILE:
-		if fCookie, ok := e.cookies[cookie]; ok && uintptr(unsafe.Pointer(fCookie.fobj)) == uintptr(peInt.Object) {
-			// Use our stashed reference rather than using unsafe on what we got back
-			// the unsafe version would be (*fileObj)(unsafe.Pointer(uintptr(peInt.Object)))
-			peExt.fobj = fCookie.fobj
-		} else {
-			panic("mismanaged memory")
-		}
-		delete(e.cookies, cookie)
+		peExt.fobj = fCookie.fobj
+		delete(e.cookies, fCookie)
 		peExt.Path = BytePtrToString((*byte)(unsafe.Pointer(peExt.fobj.Name)))
 		// Only remove the paths entry if it exists and this cookie matches
 		if fobj, ok := e.paths[peExt.Path]; ok {
-			if &fobj.cookie == cookie {
+			if fobj == fCookie {
 				delete(e.paths, peExt.Path)
 			}
 		}
