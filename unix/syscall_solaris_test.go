@@ -12,6 +12,7 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"testing"
 
@@ -330,5 +331,56 @@ func TestPortEventSlices(t *testing.T) {
 	err = port.Close()
 	if err != nil {
 		t.Errorf("port.Close() failed: %v", err)
+	}
+}
+
+func TestEventPortMemoryStress(t *testing.T) {
+	path, err := os.MkdirTemp("", "eventport")
+	if err != nil {
+		t.Fatalf("unable to create a tempdir: %v", err)
+	}
+	defer os.RemoveAll(path)
+
+	stat, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Failed to stat %s: %v", path, err)
+	}
+	port, err := unix.NewEventPort()
+	if err != nil {
+		t.Fatalf("NewEventPort failed: %v", err)
+	}
+	defer port.Close()
+	cookie := stat.Mode()
+
+
+	err = port.AssociatePath(path, stat, unix.FILE_MODIFIED, cookie)
+	if err != nil {
+		t.Errorf("AssociatePath failed: %v", err)
+	}
+	if !port.PathIsWatched(path) {
+		t.Errorf("PathIsWatched unexpectedly returned false")
+	}
+
+	iterations := 100000
+	for i := 0; i < iterations; i++ {
+		file, err := os.Create(filepath.Join(path, fmt.Sprintf("%d", i)))
+		if err != nil {
+			t.Fatalf("unable to create files in %s: %v", path, err)
+		}
+		file.Close()
+		err = os.Remove(filepath.Join(path, fmt.Sprintf("%d", i)))
+		if err != nil {
+			t.Errorf("os.Remove failed: %v", err)
+		}
+
+		_, err = port.GetOne(nil)
+		if err != nil {
+			t.Errorf("GetOne failed: %v", err)
+		}
+
+		err = port.AssociatePath(path, stat, unix.FILE_MODIFIED, cookie)
+		if err != nil {
+			t.Errorf("AssociatePath failed: %v", err)
+		}
 	}
 }
