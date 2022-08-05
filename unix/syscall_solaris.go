@@ -947,9 +947,10 @@ func (e *EventPort) peIntToExt(peInt *portEvent, peExt *PortEvent) {
 	}
 	fCookie := trustedValue
 	peExt.Cookie = fCookie.cookie
+	delete(e.cookies, fCookie)
+
 	switch peInt.Source {
 	case PORT_SOURCE_FD:
-		delete(e.cookies, fCookie)
 		peExt.Fd = uintptr(peInt.Object)
 		// Only remove the fds entry if it exists and this cookie matches
 		if fobj, ok := e.fds[peExt.Fd]; ok {
@@ -959,7 +960,6 @@ func (e *EventPort) peIntToExt(peInt *portEvent, peExt *PortEvent) {
 		}
 	case PORT_SOURCE_FILE:
 		peExt.fobj = fCookie.fobj
-		delete(e.cookies, fCookie)
 		peExt.Path = BytePtrToString((*byte)(unsafe.Pointer(peExt.fobj.Name)))
 		// Only remove the paths entry if it exists and this cookie matches
 		if fobj, ok := e.paths[peExt.Path]; ok {
