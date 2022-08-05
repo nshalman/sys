@@ -939,13 +939,12 @@ func (e *EventPort) peIntToExt(peInt *portEvent, peExt *PortEvent) {
 	peExt.Events = peInt.Events
 	peExt.Source = peInt.Source
 	returnedPointer := (*fileObjCookie)(unsafe.Pointer(peInt.User))
-	trustedValue, found := e.cookies[returnedPointer]
-	if !found || returnedPointer != trustedValue {
+	fCookie, found := e.cookies[returnedPointer]
+	if !found || returnedPointer != fCookie {
 		// XXX don't land this debug line:
-		fmt.Printf("found: %v, returnedPointer: %v trustedValue: %v\n", found, returnedPointer, trustedValue)
+		fmt.Printf("found: %v, returnedPointer: %v fCookie: %v\n", found, returnedPointer, fCookie)
 		panic("mismanaged memory")
 	}
-	fCookie := trustedValue
 	peExt.Cookie = fCookie.cookie
 	delete(e.cookies, fCookie)
 
