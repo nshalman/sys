@@ -350,19 +350,18 @@ func TestEventPortMemoryStress(t *testing.T) {
 		t.Fatalf("NewEventPort failed: %v", err)
 	}
 	defer port.Close()
-	cookie := stat.Mode()
 
-
-	err = port.AssociatePath(path, stat, unix.FILE_MODIFIED, cookie)
-	if err != nil {
-		t.Errorf("AssociatePath failed: %v", err)
-	}
-	if !port.PathIsWatched(path) {
-		t.Errorf("PathIsWatched unexpectedly returned false")
-	}
 
 	iterations := 100000
 	for i := 0; i < iterations; i++ {
+		cookie := fmt.Sprintf("cookie %d", i)
+		err = port.AssociatePath(path, stat, unix.FILE_MODIFIED, cookie)
+		if err != nil {
+			t.Errorf("AssociatePath failed: %v", err)
+		}
+		if !port.PathIsWatched(path) {
+			t.Errorf("PathIsWatched unexpectedly returned false")
+		}
 		file, err := os.Create(filepath.Join(path, fmt.Sprintf("%d", i)))
 		if err != nil {
 			t.Fatalf("unable to create files in %s: %v", path, err)
@@ -376,11 +375,6 @@ func TestEventPortMemoryStress(t *testing.T) {
 		_, err = port.GetOne(nil)
 		if err != nil {
 			t.Errorf("GetOne failed: %v", err)
-		}
-
-		err = port.AssociatePath(path, stat, unix.FILE_MODIFIED, cookie)
-		if err != nil {
-			t.Errorf("AssociatePath failed: %v", err)
 		}
 	}
 }
