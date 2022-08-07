@@ -19,6 +19,7 @@ import (
 	"sync"
 	"syscall"
 	"unsafe"
+	"time"
 )
 
 // Implemented in runtime/syscall_solaris.go.
@@ -732,6 +733,7 @@ func Munmap(b []byte) (err error) {
 type fileObjCookie struct {
 	fobj   *fileObj
 	cookie interface{}
+	uid    time.Time
 }
 
 // EventPort provides a safe abstraction on top of Solaris/illumos Event Ports.
@@ -751,7 +753,9 @@ type EventPort struct {
 	// reference to the cookie around until the event is processed
 	// thus the otherwise seemingly extraneous "cookies" map
 	// The key of this map is a pointer to the corresponding &fCookie.cookie
-	cookies map[*fileObjCookie]*fileObjCookie
+	cookies map[time.Time]*fileObjCookie
+	lastFobj *fileObjCookie //XXX last fileObjCookie that was associated to the Event Port
+	debugAddr string //XXX string of address at time of port_associate
 }
 
 // PortEvent is an abstraction of the port_event C struct.
@@ -778,7 +782,8 @@ func NewEventPort() (*EventPort, error) {
 		port:    port,
 		fds:     make(map[uintptr]*fileObjCookie),
 		paths:   make(map[string]*fileObjCookie),
-		cookies: make(map[*fileObjCookie]*fileObjCookie),
+		cookies: make(map[time.Time]*fileObjCookie),
+
 	}
 	return e, nil
 }
@@ -826,17 +831,18 @@ func (e *EventPort) AssociatePath(path string, stat os.FileInfo, events int, coo
 	if _, found := e.paths[path]; found {
 		return fmt.Errorf("%v is already associated with this Event Port", path)
 	}
-	fobj, err := createFileObj(path, stat)
+	fCookie, err := createFileObjCookie(path, stat, cookie)
 	if err != nil {
 		return err
 	}
-	fCookie := &fileObjCookie{fobj, cookie}
-	_, err = port_associate(e.port, PORT_SOURCE_FILE, uintptr(unsafe.Pointer(fobj)), events, (*byte)(unsafe.Pointer(fCookie)))
+	e.debugAddr = fmt.Sprintf("%p", fCookie)
+	_, err = port_associate(e.port, PORT_SOURCE_FILE, uintptr(unsafe.Pointer(fCookie.fobj)), events, (*byte)(unsafe.Pointer(fCookie)))
 	if err != nil {
 		return err
 	}
 	e.paths[path] = fCookie
-	e.cookies[fCookie] = fCookie
+	e.cookies[fCookie.uid] = fCookie
+	e.lastFobj = fCookie //XXX
 	return nil
 }
 
@@ -858,7 +864,7 @@ func (e *EventPort) DissociatePath(path string) error {
 	if err == nil {
 		// dissociate was successful, safe to delete the cookie
 		fCookie := e.paths[path]
-		delete(e.cookies, fCookie)
+		delete(e.cookies, fCookie.uid)
 	}
 	delete(e.paths, path)
 	return err
@@ -871,13 +877,18 @@ func (e *EventPort) AssociateFd(fd uintptr, events int, cookie interface{}) erro
 	if _, found := e.fds[fd]; found {
 		return fmt.Errorf("%v is already associated with this Event Port", fd)
 	}
-	fCookie := &fileObjCookie{nil, cookie}
-	_, err := port_associate(e.port, PORT_SOURCE_FD, fd, events, (*byte)(unsafe.Pointer(fCookie)))
+	fCookie, err := createFileObjCookie("", nil, cookie)
+	if err != nil {
+		return err
+	}
+	_, err = port_associate(e.port, PORT_SOURCE_FD, fd, events, (*byte)(unsafe.Pointer(fCookie)))
 	if err != nil {
 		return err
 	}
 	e.fds[fd] = fCookie
-	e.cookies[fCookie] = fCookie
+	e.cookies[fCookie.uid] = fCookie
+	e.lastFobj = fCookie //XXX
+	e.debugAddr = fmt.Sprintf("%p", fCookie)
 	return nil
 }
 
@@ -896,27 +907,32 @@ func (e *EventPort) DissociateFd(fd uintptr) error {
 	if err == nil {
 		// dissociate was successful, safe to delete the cookie
 		fCookie := e.fds[fd]
-		delete(e.cookies, fCookie)
+		delete(e.cookies, fCookie.uid)
 	}
 	delete(e.fds, fd)
 	return err
 }
 
-func createFileObj(name string, stat os.FileInfo) (*fileObj, error) {
-	fobj := new(fileObj)
-	bs, err := ByteSliceFromString(name)
-	if err != nil {
-		return nil, err
+func createFileObjCookie(name string, stat os.FileInfo, cookie interface{}) (*fileObjCookie, error) {
+	fCookie := new(fileObjCookie)
+	fCookie.cookie = cookie
+	fCookie.uid = time.Now()
+	if name != "" && stat != nil {
+		fCookie.fobj = new(fileObj)
+		bs, err := ByteSliceFromString(name)
+		if err != nil {
+			return nil, err
+		}
+		fCookie.fobj.Name = (*int8)(unsafe.Pointer(&bs[0]))
+		s := stat.Sys().(*syscall.Stat_t)
+		fCookie.fobj.Atim.Sec = s.Atim.Sec
+		fCookie.fobj.Atim.Nsec = s.Atim.Nsec
+		fCookie.fobj.Mtim.Sec = s.Mtim.Sec
+		fCookie.fobj.Mtim.Nsec = s.Mtim.Nsec
+		fCookie.fobj.Ctim.Sec = s.Ctim.Sec
+		fCookie.fobj.Ctim.Nsec = s.Ctim.Nsec
 	}
-	fobj.Name = (*int8)(unsafe.Pointer(&bs[0]))
-	s := stat.Sys().(*syscall.Stat_t)
-	fobj.Atim.Sec = s.Atim.Sec
-	fobj.Atim.Nsec = s.Atim.Nsec
-	fobj.Mtim.Sec = s.Mtim.Sec
-	fobj.Mtim.Nsec = s.Mtim.Nsec
-	fobj.Ctim.Sec = s.Ctim.Sec
-	fobj.Ctim.Nsec = s.Ctim.Nsec
-	return fobj, nil
+	return fCookie, nil
 }
 
 // GetOne wraps port_get(3c) and returns a single PortEvent.
@@ -939,14 +955,20 @@ func (e *EventPort) peIntToExt(peInt *portEvent, peExt *PortEvent) {
 	peExt.Events = peInt.Events
 	peExt.Source = peInt.Source
 	returnedPointer := (*fileObjCookie)(unsafe.Pointer(peInt.User))
-	fCookie, found := e.cookies[returnedPointer]
-	if !found || returnedPointer != fCookie {
-		// XXX don't land this debug line:
-		fmt.Printf("found: %v, returnedPointer: %v fCookie: %v\n", found, returnedPointer, fCookie)
+	fCookie, found := e.cookies[returnedPointer.uid]
+
+	if !found {
+		// XXX Debugging
+		fmt.Fprintf(os.Stderr, "Cookie received from port_get at %p: %v\n", returnedPointer, returnedPointer.cookie)
+		for _, val := range e.cookies {
+			fmt.Fprintf(os.Stderr, "          A cookie in the jar at %p: %v\n", val, val.cookie)
+		}
+		fmt.Fprintf(os.Stderr, " Last cookie port_associate'd at %p: %v\n", e.lastFobj, e.lastFobj.cookie)
+		fmt.Fprintf(os.Stderr, "       Address at port_associate %s\n", e.debugAddr)
 		panic("mismanaged memory")
 	}
 	peExt.Cookie = fCookie.cookie
-	delete(e.cookies, fCookie)
+	delete(e.cookies, fCookie.uid)
 
 	switch peInt.Source {
 	case PORT_SOURCE_FD:
