@@ -19,7 +19,6 @@ import (
 	"sync"
 	"syscall"
 	"unsafe"
-	"time"
 )
 
 // Implemented in runtime/syscall_solaris.go.
@@ -733,7 +732,6 @@ func Munmap(b []byte) (err error) {
 type fileObjCookie struct {
 	fobj   *fileObj
 	cookie interface{}
-	uid    time.Time
 }
 
 // EventPort provides a safe abstraction on top of Solaris/illumos Event Ports.
@@ -752,10 +750,8 @@ type EventPort struct {
 	// we should handle things gracefully. To do so, we need to keep an extra
 	// reference to the cookie around until the event is processed
 	// thus the otherwise seemingly extraneous "cookies" map
-	// The key of this map is a pointer to the corresponding &fCookie.cookie
-	cookies map[time.Time]*fileObjCookie
-	lastFobj *fileObjCookie //XXX last fileObjCookie that was associated to the Event Port
-	debugAddr string //XXX string of address at time of port_associate
+	// The key of this map is a pointer to the corresponding fCookie
+	cookies map[*fileObjCookie]*fileObjCookie
 }
 
 // PortEvent is an abstraction of the port_event C struct.
@@ -782,7 +778,7 @@ func NewEventPort() (*EventPort, error) {
 		port:    port,
 		fds:     make(map[uintptr]*fileObjCookie),
 		paths:   make(map[string]*fileObjCookie),
-		cookies: make(map[time.Time]*fileObjCookie),
+		cookies: make(map[*fileObjCookie]*fileObjCookie),
 
 	}
 	return e, nil
@@ -847,14 +843,12 @@ func (e *EventPort) AssociatePath(path string, stat os.FileInfo, events int, coo
 	if err != nil {
 		return err
 	}
-	e.debugAddr = fmt.Sprintf("%p", fCookie)
 	_, err = port_associate(e.port, PORT_SOURCE_FILE, uintptr(unsafe.Pointer(fCookie.fobj)), events, (*byte)(unsafe.Pointer(fCookie)))
 	if err != nil {
 		return err
 	}
 	e.paths[path] = fCookie
-	e.cookies[fCookie.uid] = fCookie
-	e.lastFobj = fCookie //XXX
+	e.cookies[fCookie] = fCookie
 	return nil
 }
 
@@ -876,7 +870,7 @@ func (e *EventPort) DissociatePath(path string) error {
 	if err == nil {
 		// dissociate was successful, safe to delete the cookie
 		fCookie := e.paths[path]
-		delete(e.cookies, fCookie.uid)
+		delete(e.cookies, fCookie)
 	}
 	delete(e.paths, path)
 	return err
@@ -898,9 +892,7 @@ func (e *EventPort) AssociateFd(fd uintptr, events int, cookie interface{}) erro
 		return err
 	}
 	e.fds[fd] = fCookie
-	e.cookies[fCookie.uid] = fCookie
-	e.lastFobj = fCookie //XXX
-	e.debugAddr = fmt.Sprintf("%p", fCookie)
+	e.cookies[fCookie] = fCookie
 	return nil
 }
 
@@ -919,7 +911,7 @@ func (e *EventPort) DissociateFd(fd uintptr) error {
 	if err == nil {
 		// dissociate was successful, safe to delete the cookie
 		fCookie := e.fds[fd]
-		delete(e.cookies, fCookie.uid)
+		delete(e.cookies, fCookie)
 	}
 	delete(e.fds, fd)
 	return err
@@ -928,7 +920,6 @@ func (e *EventPort) DissociateFd(fd uintptr) error {
 func createFileObjCookie(name string, stat os.FileInfo, cookie interface{}) (*fileObjCookie, error) {
 	fCookie := new(fileObjCookie)
 	fCookie.cookie = cookie
-	fCookie.uid = time.Now()
 	if name != "" && stat != nil {
 		fCookie.fobj = new(fileObj)
 		bs, err := ByteSliceFromString(name)
@@ -973,25 +964,13 @@ func (e *EventPort) peIntToExt(peInt *portEvent, peExt *PortEvent) error {
 	peExt.Events = peInt.Events
 	peExt.Source = peInt.Source
 	returnedPointer := (*fileObjCookie)(unsafe.Pointer(peInt.User))
-	fCookie, found := e.cookies[returnedPointer.uid]
+	fCookie, found := e.cookies[returnedPointer]
 
 	if !found {
-		// XXX Debugging
-		fmt.Fprintf(os.Stderr, "Maps: \n  paths: %v\n  cookies: %v\n", e.paths, e.cookies)
-		fmt.Fprintf(os.Stderr, "Cookie received from port_get at %p\n", returnedPointer)
-		for _, val := range e.cookies {
-			fmt.Fprintf(os.Stderr, "          A cookie in the jar at %p\n", val)
-		}
-		for _, val := range e.paths {
-			fmt.Fprintf(os.Stderr, "        A cookie in the paths at %p\n", val)
-		}
-		fmt.Fprintf(os.Stderr, " Last cookie port_associate'd at %p\n", e.lastFobj)
-		fmt.Fprintf(os.Stderr, "       Address at port_associate %s\n", e.debugAddr)
 		panic("unexpected address received from event port. This may be due to a kernel bug. See https://go.dev/issue/54254.")
-		//return fmt.Errorf("unexpected event")
 	}
 	peExt.Cookie = fCookie.cookie
-	delete(e.cookies, fCookie.uid)
+	delete(e.cookies, fCookie)
 
 	switch peInt.Source {
 	case PORT_SOURCE_FD:
