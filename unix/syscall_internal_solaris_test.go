@@ -9,6 +9,7 @@ package unix
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
 	"runtime"
 	"testing"
@@ -176,4 +177,50 @@ func TestEventPortDissociateAlreadyGone(t *testing.T) {
 	}
 	// The maps should be empty and there should be no pending events
 	port.checkInternals(t, 0, 0, 0, 0)
+}
+
+// Regression test for spuriously triggering a panic about memory mismanagement
+// that can be triggered by an event processing thread trying to process an event
+// after a different thread has already called port.Close().
+// Implemented as an internal test so that we can just simulate the Close()
+// because if you call close first in the same thread, things work properly
+// anyway.
+func TestEventPortGetAfterClose(t *testing.T) {
+	port, err := NewEventPort()
+	if err != nil {
+		t.Fatalf("NewEventPort failed: %v", err)
+	}
+	// Create, associate, and delete 2 files
+	for i := 0; i < 2; i++ {
+		tmpfile, err := ioutil.TempFile("", "eventport")
+		if err != nil {
+			t.Fatalf("unable to create tempfile: %v", err)
+		}
+		path := tmpfile.Name()
+		stat, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("unable to stat tempfile: %v", err)
+		}
+		err = port.AssociatePath(path, stat, FILE_MODIFIED, nil)
+		if err != nil {
+			t.Fatalf("unable to AssociatePath tempfile: %v", err)
+		}
+		err = os.Remove(path)
+		if err != nil {
+			t.Fatalf("unable to Remove tempfile: %v", err)
+		}
+	}
+	n, err := port.Pending()
+	if err != nil {
+		t.Errorf("Pending failed: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected 2 pending events, got %d", n)
+	}
+	// Simulate a close from a different thread
+	port.fds = nil
+	port.paths = nil
+	port.cookies = nil
+	//Before this fix, this would erroneously panic
+	_, _ = port.GetOne(nil)
 }
