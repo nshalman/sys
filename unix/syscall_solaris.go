@@ -804,6 +804,7 @@ func (e *EventPort) Close() error {
 	}
 	e.fds = nil
 	e.paths = nil
+	e.cookies = nil
 	return nil
 }
 
@@ -813,6 +814,17 @@ func (e *EventPort) PathIsWatched(path string) bool {
 	defer e.mu.Unlock()
 	_, found := e.paths[path]
 	return found
+}
+
+// WatchedPaths returns all paths that are currently associated with this EventPort.
+func (e *EventPort) WatchedPaths() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+        entries := make([]string, 0, len(e.paths))
+        for pathname := range e.paths {
+                entries = append(entries, pathname)
+        }
+        return entries
 }
 
 // FdIsWatched checks to see if fd is associated with this EventPort.
