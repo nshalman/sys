@@ -957,13 +957,19 @@ func (e *EventPort) GetOne(t *Timespec) (*PortEvent, error) {
 	p := new(PortEvent)
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.peIntToExt(pe, p)
+	err = e.peIntToExt(pe, p)
+	if err != nil {
+		return nil, err
+	}
 	return p, nil
 }
 
 // peIntToExt converts a cgo portEvent struct into the friendlier PortEvent
 // NOTE: Always call this function while holding the e.mu mutex
-func (e *EventPort) peIntToExt(peInt *portEvent, peExt *PortEvent) {
+func (e *EventPort) peIntToExt(peInt *portEvent, peExt *PortEvent) error {
+	if e.cookies == nil {
+		return fmt.Errorf("Event Port already closed")
+	}
 	peExt.Events = peInt.Events
 	peExt.Source = peInt.Source
 	returnedPointer := (*fileObjCookie)(unsafe.Pointer(peInt.User))
@@ -971,13 +977,18 @@ func (e *EventPort) peIntToExt(peInt *portEvent, peExt *PortEvent) {
 
 	if !found {
 		// XXX Debugging
-		fmt.Fprintf(os.Stderr, "Cookie received from port_get at %p: %v\n", returnedPointer, returnedPointer.cookie)
+		fmt.Fprintf(os.Stderr, "Maps: \n  paths: %v\n  cookies: %v\n", e.paths, e.cookies)
+		fmt.Fprintf(os.Stderr, "Cookie received from port_get at %p\n", returnedPointer)
 		for _, val := range e.cookies {
-			fmt.Fprintf(os.Stderr, "          A cookie in the jar at %p: %v\n", val, val.cookie)
+			fmt.Fprintf(os.Stderr, "          A cookie in the jar at %p\n", val)
 		}
-		fmt.Fprintf(os.Stderr, " Last cookie port_associate'd at %p: %v\n", e.lastFobj, e.lastFobj.cookie)
+		for _, val := range e.paths {
+			fmt.Fprintf(os.Stderr, "        A cookie in the paths at %p\n", val)
+		}
+		fmt.Fprintf(os.Stderr, " Last cookie port_associate'd at %p\n", e.lastFobj)
 		fmt.Fprintf(os.Stderr, "       Address at port_associate %s\n", e.debugAddr)
-		panic("mismanaged memory")
+		panic("unexpected address received from event port. This may be due to a kernel bug. See https://go.dev/issue/54254.")
+		//return fmt.Errorf("unexpected event")
 	}
 	peExt.Cookie = fCookie.cookie
 	delete(e.cookies, fCookie.uid)
@@ -1001,6 +1012,7 @@ func (e *EventPort) peIntToExt(peInt *portEvent, peExt *PortEvent) {
 			}
 		}
 	}
+	return nil
 }
 
 // Pending wraps port_getn(3c) and returns how many events are pending.
@@ -1032,8 +1044,14 @@ func (e *EventPort) Get(s []PortEvent, min int, timeout *Timespec) (int, error) 
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	valid := 0
 	for i := 0; i < int(got); i++ {
-		e.peIntToExt(&ps[i], &s[i])
+		err2 := e.peIntToExt(&ps[i], &s[i])
+		if err2 != nil {
+			break
+		}
+		valid = i + 1
 	}
-	return int(got), err
+	return valid, err
 }
+
