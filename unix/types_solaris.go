@@ -29,6 +29,7 @@ package unix
 #include <termios.h>
 #include <termio.h>
 #include <stdio.h>
+#include <ucred.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
@@ -332,3 +333,9 @@ type strbuf C.struct_strbuf
 type Strioctl C.struct_strioctl
 
 type Lifreq C.struct_lifreq
+
+// Ucred stuff
+
+type Gid_t C.gid_t
+type Pid_t C.pid_t
+type Uid_t C.uid_t

@@ -8,6 +8,7 @@ package unix_test
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -418,5 +419,77 @@ func TestLifreqGetMTU(t *testing.T) {
 		if fmt.Sprintf("%d", m) != mtu {
 			t.Errorf("unable to read MTU correctly: expected %s, got %d", mtu, m)
 		}
+	}
+}
+
+func TestUcredGet(t *testing.T) {
+	euid := unix.Geteuid()
+	creds, err := unix.UcredGet(unix.Pid_t(unix.Getpid()))
+	if err != nil {
+		t.Fatalf("unix.UcredGet failed: %v", err)
+	}
+	if euid != int(creds.Geteuid()) {
+		t.Fatalf("mismatched euid")
+	}
+}
+
+func TestGetPeerUcred(t *testing.T) {
+	d := t.TempDir()
+	path := filepath.Join(d, "foo.sock")
+	sock, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	defer sock.Close()
+
+	clientConnCh := make(chan net.Conn, 1)
+	go func() {
+		defer close(clientConnCh)
+		c, err := net.Dial("unix", path)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		clientConnCh <- c
+	}()
+	clientConn, ok := <-clientConnCh
+	if !ok {
+		return
+	}
+	defer clientConn.Close()
+
+	c, err := sock.Accept()
+	if err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+	defer c.Close()
+
+	switch unixconn := c.(type) {
+	case *net.UnixConn:
+		raw, err := unixconn.SyscallConn()
+		if err != nil {
+			t.Fatalf("SyscallConn failed: %v", err)
+		}
+
+		var creds *unix.Ucred
+		cerr := raw.Control(func(fd uintptr) {
+			creds, err = unix.GetPeerUcred(fd)
+			if err != nil {
+				err = fmt.Errorf("unix.GetPeerUcred: %w", err)
+				return
+			}
+		})
+		if cerr != nil {
+			t.Fatalf("raw.Control failed: %v", err)
+		}
+		if creds == nil {
+			t.Fatalf("Got a nil Ucred response")
+		}
+		euid := unix.Geteuid()
+		if euid != int(creds.Geteuid()) {
+			t.Fatalf("mismatched euid")
+		}
+	default:
+		t.Fatalf("Somehow didn't get a UnixConn")
 	}
 }
