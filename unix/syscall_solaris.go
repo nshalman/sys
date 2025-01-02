@@ -698,6 +698,16 @@ func Sendfile(outfd int, infd int, offset *int64, count int) (written int, err e
 //sysnb	getpeername(fd int, rsa *RawSockaddrAny, addrlen *_Socklen) (err error) = libsocket.getpeername
 //sys	setsockopt(s int, level int, name int, val unsafe.Pointer, vallen uintptr) (err error) = libsocket.setsockopt
 //sys	recvfrom(fd int, p []byte, flags int, from *RawSockaddrAny, fromlen *_Socklen) (n int, err error) = libsocket.recvfrom
+//sys	getpeerucred(fd uintptr, ucred *uintptr) (err error)
+//sys	ucred_get(pid int) (ucred uintptr, err error)
+//sys	ucred_geteuid(ucred uintptr) (uid int)
+//sys	ucred_getegid(ucred uintptr) (gid int)
+//sys	ucred_getruid(ucred uintptr) (uid int)
+//sys	ucred_getrgid(ucred uintptr) (gid int)
+//sys	ucred_getsuid(ucred uintptr) (uid int)
+//sys	ucred_getsgid(ucred uintptr) (gid int)
+//sys	ucred_getpid(ucred uintptr) (pid int)
+//sys	ucred_free(ucred uintptr)
 
 // Event Ports
 
@@ -1101,4 +1111,73 @@ func (s *Strioctl) SetInt(i int) {
 
 func IoctlSetStrioctlRetInt(fd int, req int, s *Strioctl) (int, error) {
 	return ioctlPtrRet(fd, req, unsafe.Pointer(s))
+}
+
+// Ucred Helpers
+
+// The ucred is an opaque struct. We will wrap it and always set a finalizer
+// on it to ensure it is freed.
+type Ucred struct {
+	ucred uintptr
+}
+
+// We need to ensure that ucred_free is called on the ucred when the Ucred is
+// garbage collected
+func ucred_finalizer(u *uintptr) {
+	ucred_free(*u)
+}
+
+func GetPeerUcred(fd uintptr) (*Ucred, error) {
+	var ucred uintptr
+	err := getpeerucred(fd, &ucred)
+	if err != nil {
+		return nil, err
+	}
+	result := Ucred{
+		ucred: ucred,
+	}
+	// set the finalizer on the ucred so that it will be freed
+	runtime.SetFinalizer(&result.ucred, ucred_finalizer)
+	return &result, nil
+}
+
+func UcredGet(pid int) (*Ucred, error) {
+	ucred, err := ucred_get(pid)
+	if err != nil {
+		return nil, err
+	}
+	result := Ucred{
+		ucred: ucred,
+	}
+	// set the finalizer on the ucred so that it will be freed
+	runtime.SetFinalizer(&result.ucred, ucred_finalizer)
+	return &result, nil
+}
+
+func (u *Ucred) Geteuid() int {
+	return ucred_geteuid(u.ucred)
+}
+
+func (u *Ucred) Getruid() int {
+	return ucred_getruid(u.ucred)
+}
+
+func (u *Ucred) Getsuid() int {
+	return ucred_getsuid(u.ucred)
+}
+
+func (u *Ucred) Getegid() int {
+	return ucred_getegid(u.ucred)
+}
+
+func (u *Ucred) Getrgid() int {
+	return ucred_getrgid(u.ucred)
+}
+
+func (u *Ucred) Getsgid() int {
+	return ucred_getsgid(u.ucred)
+}
+
+func (u *Ucred) Getpid() int {
+	return ucred_getpid(u.ucred)
 }
