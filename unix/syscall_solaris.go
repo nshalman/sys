@@ -698,6 +698,11 @@ func Sendfile(outfd int, infd int, offset *int64, count int) (written int, err e
 //sysnb	getpeername(fd int, rsa *RawSockaddrAny, addrlen *_Socklen) (err error) = libsocket.getpeername
 //sys	setsockopt(s int, level int, name int, val unsafe.Pointer, vallen uintptr) (err error) = libsocket.setsockopt
 //sys	recvfrom(fd int, p []byte, flags int, from *RawSockaddrAny, fromlen *_Socklen) (n int, err error) = libsocket.recvfrom
+//sys	getpeerucred(fd uintptr, ucred *unsafe.Pointer) (err error)
+//sys	ucred_geteuid(ucred unsafe.Pointer) (uid Uid_t)
+//sys	ucred_getegid(ucred unsafe.Pointer) (gid Gid_t)
+//sys	ucred_getpid(ucred unsafe.Pointer) (pid Pid_t)
+//sys	ucred_free(ucred unsafe.Pointer)
 
 // Event Ports
 
@@ -1101,4 +1106,26 @@ func (s *Strioctl) SetInt(i int) {
 
 func IoctlSetStrioctlRetInt(fd int, req int, s *Strioctl) (int, error) {
 	return ioctlPtrRet(fd, req, unsafe.Pointer(s))
+}
+
+// Ucred Helpers
+type Ucred struct {
+	Pid Pid_t
+	Uid Uid_t
+	Gid Gid_t
+}
+
+func GetPeerUcred(fd uintptr) (*Ucred, error) {
+	var ucred unsafe.Pointer
+	err := getpeerucred(fd, &ucred)
+	if err != nil {
+		return nil, err
+	}
+	result := Ucred{
+		Pid: ucred_getpid(ucred),
+		Uid: ucred_geteuid(ucred),
+		Gid: ucred_getegid(ucred),
+	}
+	ucred_free(ucred)
+	return &result, nil
 }

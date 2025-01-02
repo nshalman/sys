@@ -514,3 +514,7 @@ type Lifreq struct {
 	Type   uint32
 	Lifru  [336]byte
 }
+
+type Gid_t uint32
+type Pid_t int32
+type Uid_t uint32
